@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -8,10 +8,16 @@ import {
   SafeAreaView,
   TextInput,
   RefreshControl,
+  Animated,
+  Dimensions,
+  TouchableOpacity,
+  Platform,
+  StatusBar as RNStatusBar,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { PokemonCard } from './src/components/PokemonCard';
 import { PokemonDetailModal } from './src/components/PokemonDetailModal';
+import { WhosThatPokemon } from './src/components/WhosThatPokemon';
 import { fetchPokemonList, fetchPokemon } from './src/api/pokemon';
 import { Pokemon, PokemonListItem } from './src/types/pokemon';
 
@@ -30,6 +36,12 @@ export default function App() {
   const [selectedPokemon, setSelectedPokemon] = useState<Pokemon | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [modalLoading, setModalLoading] = useState(false);
+  const [showCatchAnimation, setShowCatchAnimation] = useState(false);
+  const [showQuiz, setShowQuiz] = useState(false);
+
+  const pokeballScale = useRef(new Animated.Value(0)).current;
+  const pokeballRotate = useRef(new Animated.Value(0)).current;
+  const pokeballOpacity = useRef(new Animated.Value(0)).current;
 
   const loadPokemon = useCallback(async (reset: boolean = false) => {
     try {
@@ -85,7 +97,47 @@ export default function App() {
     setLoadingMore(false);
   };
 
+  const playCatchAnimation = (): Promise<void> => {
+    return new Promise((resolve) => {
+      setShowCatchAnimation(true);
+      pokeballScale.setValue(0);
+      pokeballRotate.setValue(0);
+      pokeballOpacity.setValue(1);
+
+      Animated.sequence([
+        Animated.parallel([
+          Animated.spring(pokeballScale, {
+            toValue: 1,
+            friction: 4,
+            tension: 100,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pokeballRotate, {
+            toValue: 1,
+            duration: 400,
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.sequence([
+          Animated.timing(pokeballRotate, { toValue: 0.8, duration: 100, useNativeDriver: true }),
+          Animated.timing(pokeballRotate, { toValue: 1.2, duration: 100, useNativeDriver: true }),
+          Animated.timing(pokeballRotate, { toValue: 0.9, duration: 100, useNativeDriver: true }),
+          Animated.timing(pokeballRotate, { toValue: 1, duration: 100, useNativeDriver: true }),
+        ]),
+        Animated.timing(pokeballOpacity, {
+          toValue: 0,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+      ]).start(() => {
+        setShowCatchAnimation(false);
+        resolve();
+      });
+    });
+  };
+
   const handlePokemonPress = async (id: number) => {
+    await playCatchAnimation();
     setModalVisible(true);
     setModalLoading(true);
     try {
@@ -119,7 +171,16 @@ export default function App() {
     <SafeAreaView style={styles.container}>
       <StatusBar style="dark" />
       <View style={styles.header}>
-        <Text style={styles.title}>Pokédex</Text>
+        <View style={styles.headerRow}>
+          <Text style={styles.title}>Pokédex</Text>
+          <TouchableOpacity
+            style={styles.quizButton}
+            onPress={() => setShowQuiz(true)}
+            accessibilityLabel="Who's That Pokémon?"
+          >
+            <Text style={styles.quizButtonText}>🎲</Text>
+          </TouchableOpacity>
+        </View>
         <Text style={styles.subtitle}>
           Search for a Pokémon by name
         </Text>
@@ -175,6 +236,41 @@ export default function App() {
         loading={modalLoading}
         onClose={handleCloseModal}
       />
+
+      <WhosThatPokemon
+        visible={showQuiz}
+        onClose={() => setShowQuiz(false)}
+      />
+
+      {showCatchAnimation && (
+        <View style={styles.catchOverlay}>
+          <Animated.View
+            style={[
+              styles.pokeball,
+              {
+                opacity: pokeballOpacity,
+                transform: [
+                  { scale: pokeballScale },
+                  {
+                    rotate: pokeballRotate.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: ['-30deg', '0deg'],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <View style={styles.pokeballTop} />
+            <View style={styles.pokeballMiddle}>
+              <View style={styles.pokeballButton}>
+                <View style={styles.pokeballButtonInner} />
+              </View>
+            </View>
+            <View style={styles.pokeballBottom} />
+          </Animated.View>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -186,16 +282,37 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingHorizontal: 16,
-    paddingTop: 16,
+    paddingTop: Platform.OS === 'android' ? (RNStatusBar.currentHeight ?? 40) + 8 : 16,
     paddingBottom: 8,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
   },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   title: {
     fontSize: 32,
     fontWeight: 'bold',
     color: '#E63946',
+  },
+  quizButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#E63946',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#E63946',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  quizButtonText: {
+    fontSize: 24,
   },
   subtitle: {
     fontSize: 14,
@@ -247,5 +364,51 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 16,
     color: '#999',
+  },
+  catchOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1000,
+  },
+  pokeball: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    overflow: 'hidden',
+    borderWidth: 4,
+    borderColor: '#1a1a1a',
+  },
+  pokeballTop: {
+    flex: 1,
+    backgroundColor: '#E63946',
+  },
+  pokeballMiddle: {
+    height: 12,
+    backgroundColor: '#1a1a1a',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pokeballButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#1a1a1a',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'absolute',
+  },
+  pokeballButtonInner: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#fff',
+    borderWidth: 3,
+    borderColor: '#1a1a1a',
+  },
+  pokeballBottom: {
+    flex: 1,
+    backgroundColor: '#fff',
   },
 });
